@@ -33,7 +33,7 @@
   --tr:150ms ease;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;font-family:var(--font);font-size:13px;color:var(--grey-900);background:var(--grey-50)}
+html,body{height:100%;overflow:hidden;font-family:var(--font);font-size:13px;color:var(--grey-900);background:var(--grey-50)}
 button{font-family:var(--font);cursor:pointer;border:none;background:none}
 input,select{font-family:var(--font)}
 
@@ -335,6 +335,7 @@ tbody td:last-child{border-right:none}
 .dark .sb-item:hover {
     color: #FFFFFF !important;
 }
+/* Fix for the Summary Table cell hover in dark mode */
 .dark .smv-sum-table td:hover {
     background-color: rgba(30, 136, 229, 0.15) !important; 
     color: #FFFFFF !important;
@@ -780,10 +781,37 @@ function applyGlobalFilter() {
 }
 
 function clearGlobalFilter() {
+  // 1. Clear Sidebar Global Filters
   document.getElementById('global-model').value = '';
   document.getElementById('global-start').value = '';
   document.getElementById('global-end').value = '';
+
+  // 2. Clear Topbar Year Filter
+  const yearFilter = document.getElementById('smv-year');
+  if (yearFilter) yearFilter.value = 'all';
+
+  // 3. Clear Table Filters
+  const tableSearch = document.getElementById('smv-search');
+  if (tableSearch) tableSearch.value = '';
+  
+  const tableSearchSec = document.getElementById('smv-search2');
+  if (tableSearchSec) tableSearchSec.value = '';
+
+  const tableProd = document.getElementById('smv-product-filter');
+  if (tableProd) tableProd.value = '';
+
+  const statusFilter = document.getElementById('smv-status-filter');
+  if (statusFilter) statusFilter.value = '';
+
+  const npiFilter = document.getElementById('smv-npimp-filter');
+  if (npiFilter) npiFilter.value = '';
+
+  const dateSort = document.getElementById('smv-date-sort');
+  if (dateSort) dateSort.value = 'desc'; // Reset to default sort direction
+
+  // 4. Apply changes (this reloads the data and re-evaluates all the now-empty filters)
   applyGlobalFilter();
+  toast('All filters cleared', 'ti-filter-off');
 }
 
 function getGlobalFilteredData(rawData) {
