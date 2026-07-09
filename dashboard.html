@@ -820,9 +820,18 @@ function getGlobalFilteredData(rawData) {
   const dEnd = document.getElementById('global-end')?.value;
 
   if (!gModel && !dStart && !dEnd) return rawData;
+  if (!rawData || !rawData.length) return rawData;
 
-  const startTimestamp = dStart ? new Date(dStart).getTime() : -Infinity;
-  const endTimestamp = dEnd ? new Date(dEnd).getTime() + 86399999 : Infinity;
+  // Dynamically locate the correct date column to ensure the filter and table look at the exact same data
+  const dateKey = findCol(rawData[0], ['Received SVM', 'Received SMV', 'SMV Tracker']) || Object.keys(rawData[0])[0];
+
+  // Build boundaries in LOCAL time (matches parseDate()) — using new Date(isoString)
+  // here parses as UTC and, for IST/other UTC+ users, was letting next-day rows
+  // (e.g. May 1) leak into an April-only filter.
+  const _startD = dStart ? dStart.split('-').map(Number) : null;
+  const _endD   = dEnd   ? dEnd.split('-').map(Number)   : null;
+  const startTimestamp = _startD ? new Date(_startD[0], _startD[1]-1, _startD[2]).getTime() : -Infinity;
+  const endTimestamp   = _endD   ? new Date(_endD[0], _endD[1]-1, _endD[2]).getTime() + 86399999 : Infinity;
 
   return rawData.filter(r => {
     let modelMatch = true;
@@ -833,8 +842,10 @@ function getGlobalFilteredData(rawData) {
 
     let dateMatch = true;
     if (dStart || dEnd) {
-      const rawDate = r['DATE'] || r['Date'] || r['SMV Release Date'] || r['SMV Tracker'] || r['SMV Tracker '] || Object.values(r)[0];
+      // Now strictly uses the resolved column instead of hardcoded names
+      const rawDate = r[dateKey]; 
       const rowDateObj = parseDate(rawDate);
+      
       if (!rowDateObj || isNaN(rowDateObj)) {
         dateMatch = false;
       } else {
@@ -846,7 +857,6 @@ function getGlobalFilteredData(rawData) {
     return modelMatch && dateMatch;
   });
 }
-
 function setGlobalDateRange(daysAgo) {
     const end = new Date();
     const start = new Date();
@@ -878,14 +888,39 @@ function loadCSV(key) {
    UTILS
 ═══════════════════════════════════════════════ */
 const fmt = n => (n==null||isNaN(n)) ? '—' : Number(n).toLocaleString();
+function isRealNum(v) {
+  // This strictly ensures the value is a number, blocking all blanks, nulls, and text
+  return typeof v === 'number' && !isNaN(v);
+}
+const _MONTH_MAP = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+function _twoDigitYear(yy) { yy = parseInt(yy,10); return yy < 50 ? 2000+yy : 1900+yy; }
 
 function parseDate(str) {
   if (!str) return null;
-  str = str.trim();
-  let m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-  if (m) { let y=m[3].length===2?'20'+m[3]:m[3]; return new Date(`${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`); }
+  str = str.toString().trim();
+
+  // D-MMM-YY / D-MMM-YYYY  e.g. "1-May-26", "28-Apr-2026" — built in LOCAL time
+  // so it lines up exactly with how the date-filter boundaries below are built.
+  let m = str.match(/^(\d{1,2})[\/\-\s]([A-Za-z]{3,})[\/\-\s]?(\d{2,4})$/);
+  if (m) {
+    const mon = _MONTH_MAP[m[2].slice(0,3).toLowerCase()];
+    if (mon !== undefined) {
+      const y = m[3].length===2 ? _twoDigitYear(m[3]) : parseInt(m[3],10);
+      return new Date(y, mon, parseInt(m[1],10));
+    }
+  }
+
+  // Numeric D/M/Y or D-M-Y — also built in LOCAL time (was UTC before, via ISO-string parsing)
+  m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m) {
+    const y = m[3].length===2 ? _twoDigitYear(m[3]) : parseInt(m[3],10);
+    return new Date(y, parseInt(m[2],10)-1, parseInt(m[1],10));
+  }
+
+  // ISO yyyy-mm-dd — also built in LOCAL time
   m = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-  if (m) return new Date(str);
+  if (m) return new Date(parseInt(m[1],10), parseInt(m[2],10)-1, parseInt(m[3],10));
+
   const d = new Date(str);
   return isNaN(d) ? null : d;
 }
@@ -1187,7 +1222,7 @@ function smvStatusUpper(v){ return smvClean(v).toUpperCase(); }
 
 function resolveSMVCols(sample) {
   return {
-    date:     findCol(sample, ['SMV Tracker','SMV Release Date','Date']) || Object.keys(sample)[0],
+    date:     findCol(sample, ['Received SVM', 'Received SMV', 'SMV Tracker']) || Object.keys(sample)[0],
     year:     findCol(sample, ['SMV Tracker. ','Year']) || Object.keys(sample)[1],
     week:     findCol(sample, ['Week']),
     month:    findCol(sample, ['Month']),
@@ -1236,6 +1271,9 @@ async function loadSMV() {
       const faiLT     = numOrNull(r[c.faiLT]);
       const approvLT  = numOrNull(r[c.approvLT]);
       const implLT    = numOrNull(r[c.implLT]);
+      
+      // Extract the product name securely (from our earlier update)
+      const prodName = smvClean(r[c.product] || r['MODEL'] || r['Model Name'] || '');
 
       let aging = null;
       if (npiMp === 'MP' && !CLOSED_LIKE.includes(status)) {
@@ -1243,16 +1281,15 @@ async function loadSMV() {
         if (rel && !isNaN(rel)) aging = Math.round((_agingToday - rel) / 86400000);
       }
 
-      let e2eLT = null;
-      if (faiLT !== null && implLT !== null) {
-        e2eLT = faiLT + (approvLT !== null ? approvLT : 0) + implLT;
-      }
+      // Read the existing End-to-End LT column directly instead of calculating it
+      let e2eLT = numOrNull(r[c.e2eLT]);
 
       return {
         ...r,
         __date: r[c.date],
         __npiMp: npiMp,
         __status: status,
+        __product: prodName,
         __aging: aging,
         __faiLT: faiLT,
         __approvLT: approvLT,
@@ -1359,12 +1396,15 @@ const SMV_REPORTS = {
   e2e: {
     title: 'End-to-End Lead Time', metric: '__e2eLT', requiresMP: false,
     buckets: [
-      { label:'Total Implemented', color: COLORS.blue, test: r => r.__e2eLT!==null && r.__e2eLT>=0 },
+      // Uses isRealNum to safely include 0 and negatives, matching the KPI base
+      { label:'Total Implemented', color: COLORS.blue, test: r => isRealNum(r.__e2eLT) },
       { label:'>4 WK', color: COLORS.red, test: r => r.__e2eLT!==null && r.__e2eLT>=28 },
       { label:'>3 WK', color: COLORS.red, test: r => r.__e2eLT!==null && r.__e2eLT>=21 && r.__e2eLT<28 },
       { label:'>2 WK', color: COLORS.amber, test: r => r.__e2eLT!==null && r.__e2eLT>=14 && r.__e2eLT<21 },
-      { label:'>7 D', color: COLORS.amber, test: r => r.__e2eLT!==null && r.__e2eLT>=8 && r.__e2eLT<14 },
-      { label:'<=7 D', color: COLORS.teal, test: r => r.__e2eLT!==null && r.__e2eLT>0 && r.__e2eLT<8 },
+      // Changed to handle exactly 8 up to 13.99
+      { label:'>7 D', color: COLORS.amber, test: r => r.__e2eLT!==null && r.__e2eLT>7 && r.__e2eLT<14 }, 
+      // Changed to <= 7 to capture 0 and negative numbers, matching the KPI
+      { label:'<=7 D', color: COLORS.teal, test: r => isRealNum(r.__e2eLT) && r.__e2eLT<=7 }, 
     ]
   },
 };
@@ -1387,8 +1427,8 @@ function renderSMVKPIs() {
   const total = mp.length;
   const closed = mp.filter(r => r.__status==='CLOSED').length;
   const open = mp.filter(r => ['OPEN','NO XCVR','WAITING FOR APPROVAL','WAITING FOR IMPLEMENT'].includes(r.__status)).length;
-  const e2eRows = _smvYearFiltered().filter(r => r.__e2eLT!==null && r.__e2eLT>0);
-  const onTime = e2eRows.filter(r => r.__e2eLT<8).length;
+  const e2eRows = _smvYearFiltered().filter(r => isRealNum(r.__e2eLT));
+  const onTime = e2eRows.filter(r => r.__e2eLT <= 7).length;
   const ontimeRate = e2eRows.length ? (onTime/e2eRows.length*100).toFixed(1) : '—';
 
   document.getElementById('smv-total').textContent = fmt(total);
@@ -1512,13 +1552,13 @@ function renderSMVTrends() {
 
   const base = _smvYearFiltered();
 
-  const e2eRows = base.filter(r => r.__e2eLT!==null && r.__e2eLT>0);
+  const e2eRows = base.filter(r => isRealNum(r.__e2eLT));
   const e2eGroups = groupByPeriod(e2eRows, '__date', eMode);
   const e2eLabels = e2eGroups.map(g=>g.label);
   const e2eData = e2eGroups.map(g => { const t=g.rows.length; const c=g.rows.filter(r=>r.__e2eLT<8).length; return t?+(c/t*100).toFixed(1):0; });
   makeLine('smv-trend-e2e', e2eLabels, [lineDs('Ontime % (≤7D)', e2eData, COLORS.purple)], {pct:true,min:0,max:110});
 
-  const faiRows = base.filter(r => r.__faiLT!==null && r.__faiLT>=0);
+  const faiRows = base.filter(r => isRealNum(r.__faiLT) && r.__faiLT >= 0);
   const faiGroups = groupByPeriod(faiRows, '__date', fMode);
   const faiLabels = faiGroups.map(g=>g.label);
   const faiData = faiGroups.map(g => { const t=g.rows.length; const c=g.rows.filter(r=>r.__faiLT<3).length; return t?+(c/t*100).toFixed(1):0; });
