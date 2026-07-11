@@ -1060,17 +1060,26 @@ function bindTrendTabs(tabsId, renderFn) {
 /* ═══════════════════════════════════════════════
    TABLE RENDERER
 ═══════════════════════════════════════════════ */
-function renderTable(elId, rows, cols, tagCols={}, countElId) {
+function renderTable(elId, rows, cols, tagCols={}, countElId, startIndex = 0) {
   const el=document.getElementById(elId);
   if(!el) return;
   if(!rows?.length) { el.innerHTML='<div class="empty"><i class="ti ti-mood-empty"></i><p>No matching records found.</p></div>'; if(countElId)document.getElementById(countElId).textContent='0 rows'; return; }
   if(countElId) document.getElementById(countElId).textContent = rows.length.toLocaleString()+' rows';
   const useCols=cols||Object.keys(rows[0]||{}).slice(0,14);
   let h='<table><thead><tr>';
+  
+  // Prepend Serial Number Column Header
+  h += '<th style="width: 54px; text-align: center; cursor: default;">S.No.</th>';
+  
   useCols.forEach(c=>h+=`<th onclick="sortTable('${elId}',${JSON.stringify(c)})" title="${c}">${c}<span class="sort-icon"></span></th>`);
   h+='</tr></thead><tbody>';
-  rows.slice(0,2000).forEach(r=>{
+  
+  rows.slice(0,2000).forEach((r, idx)=>{
     h+='<tr>';
+    
+    // Prepend Serial Number Column Cell (tracks index continuously across pagination pages)
+    h += `<td style="text-align: center; font-weight: 500;" class="td-mono">${startIndex + idx + 1}</td>`;
+    
     useCols.forEach(c=>{
       let v=(r[c]??'').toString();
       const fn=tagCols[c];
@@ -1123,7 +1132,10 @@ function renderTablePaged(key, rows, cols, tagCols, tableEl, countEl) {
   let pg = Math.min(pgState[key], totalPages);
   pgState[key] = pg;
   const slice = rows.slice((pg-1)*PAGE_SIZE, pg*PAGE_SIZE);
-  renderTable(tableEl, slice, cols, tagCols, null);
+  
+  // Calculate continuous starting index for the current page chunk
+  const startIndex = (pg - 1) * PAGE_SIZE;
+  renderTable(tableEl, slice, cols, tagCols, null, startIndex);
 
   const countEl2 = document.getElementById(countEl);
   if(countEl2) countEl2.textContent = `${total.toLocaleString()} rows`;
@@ -1605,14 +1617,12 @@ function openSMVDrillPeriod(reportKey, bucketLabel, periodLabel) {
 function openSMVDrill(reportKey, label, rows) {
   const c = _smvCols || {};
   
-  // Explicitly list all original sheet columns + calculated math columns
   const cols = [
     c.date, c.year, c.week, c.month, c.product, c.partNo, c.svnKit, c.xcvr, c.swBuild, c.npiMp, 
     c.faiSubmit, c.faiApprov, c.mpConv, c.deActiv, c.status, 
     '__aging', '__faiLT', c.remark1, '__approvLT', c.remark2, '__implLT', '__e2eLT', c.remark3, c.lastStat
   ].filter(Boolean);
 
-  // Rename the internal math columns so they look clean in the popup header
   const niceNames = { 
     __aging: 'Aging (Days)', 
     __faiLT: 'FAI Sub LT', 
@@ -1621,24 +1631,32 @@ function openSMVDrill(reportKey, label, rows) {
     __e2eLT: 'End-to-End LT' 
   };
 
-  // Build the table headers (added white-space nowrap so headers don't stack weirdly with many columns)
-  let html = '<table><thead><tr>' + cols.map(cc=>`<th style="white-space:nowrap;">${niceNames[cc]||cc}</th>`).join('') + '</tr></thead><tbody>';
+  let html = '<table><thead><tr>';
+  
+  // Prepend Serial Number to Drill Down Modal Header
+  html += '<th style="white-space:nowrap; width: 54px; text-align: center;">S.No.</th>';
+  
+  html += cols.map(cc=>`<th style="white-space:nowrap;">${niceNames[cc]||cc}</th>`).join('') + '</tr></thead><tbody>';
   
   if (!rows.length) {
-    html += `<tr><td colspan="${cols.length}" style="text-align:center;padding:20px">No records found.</td></tr>`;
+    html += `<tr><td colspan="${cols.length + 1}" style="text-align:center;padding:20px">No records found.</td></tr>`;
   } else {
-    // Build the table rows
-    rows.slice(0,500).forEach(r=>{
-      html += '<tr>' + cols.map(cc=>{
+    rows.slice(0,500).forEach((r, idx)=>{
+      html += '<tr>';
+      
+      // Prepend Serial Number into the rows
+      html += `<td style="white-space:nowrap; text-align:center; font-weight:500;" class="td-mono">${idx + 1}</td>`;
+      
+      cols.map(cc=>{
         let v = r[cc];
         v = (v===null||v===undefined) ? '' : v.toString();
-        return `<td style="white-space:nowrap;">${v || '<span style="color:var(--grey-300)">—</span>'}</td>`;
-      }).join('') + '</tr>';
+        html += `<td style="white-space:nowrap;">${v || '<span style="color:var(--grey-300)">—</span>'}</td>`;
+      });
+      html += '</tr>';
     });
   }
   html += '</tbody></table>';
   
-  // Inject into the modal
   document.getElementById('data-modal-title').textContent = `${SMV_REPORTS[reportKey].title} — ${label} (${rows.length.toLocaleString()} records)`;
   document.getElementById('data-modal-table').innerHTML = html;
   document.getElementById('data-modal').classList.add('open');
