@@ -954,7 +954,7 @@ const COLORS={blue:'#1E88E5',teal:'#1D9E75',amber:'#EF9F27',red:'#DC2626',purple
 // Scriptable grid-line color — Chart.js re-evaluates functions like this on every
 // draw/update, so gridlines stay in sync automatically when dark mode is toggled.
 function gridLineColor() {
-  return document.documentElement.classList.contains('dark') ? 'rgba(148,163,184,.05)' : 'rgba(0,0,0,.04)';
+  return document.documentElement.classList.contains('dark') ? 'rgba(148,163,184,.01)' : 'rgba(0,0,0,.01)';
 }
 
 function makeLine(id, labels, datasets, opts={}) {
@@ -963,7 +963,11 @@ function makeLine(id, labels, datasets, opts={}) {
   
   // DYNAMIC GRID COLOR
   const isDark = document.documentElement.classList.contains('dark');
-  const gridColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.3)';
+  const gridColor = isDark ? 'rgba(255,255,255,0.01)' : 'rgba(0,0,0,0.01)';
+
+  // DYNAMIC DENSITY CHECK
+  // If there are more than 24 points (e.g., Weekly view), we treat the chart as "dense"
+  const isDense = labels.length > 24;
 
   CHARTS[id]=new Chart(c,{
     type:'line', data:{labels,datasets},
@@ -975,29 +979,34 @@ function makeLine(id, labels, datasets, opts={}) {
         const { ctx } = chart;
         chart.data.datasets.forEach((dataset, i) => {
           const meta = chart.getDatasetMeta(i);
+          
+          // Determine how many labels to skip to prevent overlapping on dense charts
+          const step = isDense ? Math.ceil(labels.length / 14) : 1;
+
           meta.data.forEach((point, index) => {
+            // Skip drawing numbers if dense, EXCEPT for the calculated steps and the very last point
+            if (index % step !== 0 && index !== labels.length - 1) return;
+
+            // Prevent the second-to-last point from overlapping with the guaranteed last point
+            if (isDense && index % step === 0 && index >= labels.length - 3 && index !== labels.length - 1) return;
+
             const val = dataset.data[index];
             if (val !== null && val !== undefined) { 
               const isDarkTheme = document.documentElement.classList.contains('dark');
               ctx.fillStyle = isDarkTheme ? '#E2E8F0' : '#4A5568';
               
-              // Decreased font size to 9px
               ctx.font = '600 9px Inter, sans-serif'; 
               ctx.textAlign = 'center';
-
-              // Round the value to remove decimals
-              const displayVal = Math.round(val).toFixed(0);
               
-              // Add a % sign if the chart is configured as a percentage chart
+              // Use Math.round() to completely remove any decimals
+              const displayVal = Math.round(val);
               const text = opts.pct ? displayVal + '%' : displayVal;
 
               // Alternate positions based on index
               if (index % 2 === 0) {
-                // First, third, fifth points go ABOVE the line
                 ctx.textBaseline = 'bottom';
                 ctx.fillText(text, point.x, point.y - 6); 
               } else {
-                // Second, fourth, sixth points go BELOW the line
                 ctx.textBaseline = 'top';
                 ctx.fillText(text, point.x, point.y + 6);
               }
@@ -1009,22 +1018,26 @@ function makeLine(id, labels, datasets, opts={}) {
     // ----------------------------------------------------------------
 
     options:{
-      // Added bottom padding to make room for numbers drawn below the line
-      layout: { padding: { top: 22, bottom: 22, right: 10, left: 10 } }, 
+      layout: { padding: { top: 22, bottom: 22, right: 15, left: 10 } }, 
       responsive:true, maintainAspectRatio:false, animation:{duration:700},
       plugins:{legend:{display:opts.legend||false,labels:{font:{size:11},color:'#64748B',boxWidth:12}},tooltip:{mode:'index',intersect:false,backgroundColor:'#1A1F2B',titleFont:{size:11},bodyFont:{size:11}}},
       scales:{
         x:{
           grid:{color:gridColor},
-          // FORCED AUTOSKIP FALSE TO SHOW ALL MONTH LABELS
-          ticks:{color:'#94A3B8',font:{size:10},maxRotation:45,autoSkip:false}
+          ticks:{
+            color:'#94A3B8',
+            font:{size:10},
+            maxRotation:45,
+            // If dense (weekly), allow Chart.js to auto-skip dates. 
+            // If not dense (monthly), force false so no month is ever missed.
+            autoSkip: isDense 
+          }
         },
         y:{grid:{color:gridColor},ticks:{color:'#94A3B8',font:{size:10},callback:v=>opts.pct?v+'%':v},min:opts.min,max:opts.max}
       }
     }
   });
 }
-
 function lineDs(label, data, color, dash=[], pointStyle='circle', pointRadius=3) {
   return {
     label, data, spanGaps: true,
