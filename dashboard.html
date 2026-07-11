@@ -869,15 +869,15 @@ function setGlobalDateRange(daysAgo) {
    CSV LOADER
 ═══════════════════════════════════════════════ */
 function loadCSV(key) {
+  // Returns the RAW, unfiltered sheet rows. Global (sidebar) product/date
+  // filtering is applied separately by the caller so we can tell "the fetch
+  // failed" apart from "the fetch succeeded but the current filter matches
+  // zero rows" — those need very different UI treatment.
   return new Promise((res, rej) => {
-    const process = (data) => res(getGlobalFilteredData(data));
-    if (CACHE[key]) return process(CACHE[key]);
+    if (CACHE[key]) return res(CACHE[key]);
     Papa.parse(URLS[key], {
       download: true, header: true, skipEmptyLines: true,
-      complete: r => {
-        CACHE[key] = r.data;
-        process(r.data);
-      },
+      complete: r => { CACHE[key] = r.data; res(r.data); },
       error: e => rej(e)
     });
   });
@@ -1262,11 +1262,32 @@ async function loadSMV() {
       if (el) el.innerHTML = `<div class="empty"><i class="ti ti-plug-connected-x"></i><p>SMV Tracker CSV link not set yet.</p><p style="font-size:11px;color:var(--grey-400)">Publish the "SMV Tracker" sheet to the web as CSV, then paste the link into the <b>SMV_URL</b> constant near the top of the script.</p></div>`;
       return;
     }
-    const rows = await loadCSV('smv');
-    if (!rows.length) { showErr('smv-table','SMV Tracker'); return; }
+    // 1. Fetch/parse the RAW sheet — unfiltered. This is the only step whose
+    //    failure should trigger the "Could not load" error card.
+    const rawRows = await loadCSV('smv');
+    if (!rawRows.length) { showErr('smv-table','SMV Tracker'); return; }
 
-    _smvCols = resolveSMVCols(rows[0]);
+    _smvCols = resolveSMVCols(rawRows[0]);
     const c = _smvCols;
+
+    // Populate Year dropdown + Product datalist from the FULL raw dataset so
+    // these filter options stay available even when the current filter
+    // matches nothing.
+    const yearsAll = [...new Set(rawRows.map(r => { const d=parseDate(r[c.date]); return d && !isNaN(d) ? d.getFullYear() : null; }).filter(Boolean))].sort((a,b)=>b-a);
+    const ySel = document.getElementById('smv-year');
+    if (ySel && !ySel.dataset.populated) {
+      ySel.innerHTML = '<option value="all">All Years</option>' + yearsAll.map(y=>`<option value="${y}">${y}</option>`).join('');
+      ySel.dataset.populated='1';
+    }
+    const prodListEl = document.getElementById('smv-product-list');
+    if (prodListEl && c.product) {
+      const productsAll = [...new Set(rawRows.map(r => smvClean(r[c.product])).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+      prodListEl.innerHTML = productsAll.map(p => `<option value="${p.replace(/"/g,'&quot;')}"></option>`).join('');
+    }
+
+    // 2. NOW apply the sidebar's global Product + Date filters. If nothing
+    //    matches, that is a legitimate empty result — not a load failure.
+    const rows = getGlobalFilteredData(rawRows);
 
     const _agingToday = new Date(); _agingToday.setHours(0,0,0,0);
     const CLOSED_LIKE = ['CLOSED','NOT APPLICABLE','CANCELED'];
@@ -1277,8 +1298,7 @@ async function loadSMV() {
       const faiLT     = numOrNull(r[c.faiLT]);
       const approvLT  = numOrNull(r[c.approvLT]);
       const implLT    = numOrNull(r[c.implLT]);
-      
-      // Extract the product name securely (from our earlier update)
+
       const prodName = smvClean(r[c.product] || r['MODEL'] || r['Model Name'] || '');
 
       let aging = null;
@@ -1287,7 +1307,6 @@ async function loadSMV() {
         if (rel && !isNaN(rel)) aging = Math.round((_agingToday - rel) / 86400000);
       }
 
-      // Read the existing End-to-End LT column directly instead of calculating it
       let e2eLT = numOrNull(r[c.e2eLT]);
 
       return {
@@ -1304,24 +1323,9 @@ async function loadSMV() {
       };
     });
 
-    const years = [...new Set(_smvRaw.map(r => { const d=parseDate(r.__date); return d && !isNaN(d) ? d.getFullYear() : null; }).filter(Boolean))].sort((a,b)=>b-a);
-    const ySel = document.getElementById('smv-year');
-    if (ySel && !ySel.dataset.populated) {
-      ySel.innerHTML = '<option value="all">All Years</option>' + years.map(y=>`<option value="${y}">${y}</option>`).join('');
-      ySel.dataset.populated='1';
-    }
-
-    // Populate the Product datalist — gives the product filter box a dropdown of
-    // every distinct product, while still allowing free typing to search/filter it.
-    const prodListEl = document.getElementById('smv-product-list');
-    if (prodListEl && c.product) {
-      const products = [...new Set(_smvRaw.map(r => smvClean(r[c.product])).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
-      prodListEl.innerHTML = products.map(p => `<option value="${p.replace(/"/g,'&quot;')}"></option>`).join('');
-    }
-
     const rawCols = [c.date, c.year, c.week, c.month, c.product, c.partNo, c.svnKit, c.xcvr, c.swBuild, c.npiMp, c.faiSubmit, c.faiApprov, c.mpConv, c.deActiv, c.status, c.aging, c.faiLT, c.remark1, c.approvLT, c.remark2, c.implLT, c.e2eLT, c.remark3, c.lastStat].filter(Boolean);
-    const displayCols = rawCols.filter(cc => rows[0] && cc in rows[0]);
-    setTData('smv', _smvRaw, displayCols.length?displayCols:Object.keys(rows[0]).slice(0,16), {
+    const displayCols = rawCols.filter(cc => rawRows[0] && cc in rawRows[0]);
+    setTData('smv', _smvRaw, displayCols.length?displayCols:Object.keys(rawRows[0]).slice(0,16), {
       [c.status]: v => {
         const s=smvStatusUpper(v);
         if (s==='CLOSED') return 'tag-green';
@@ -1333,8 +1337,16 @@ async function loadSMV() {
       }
     }, 'smv-table','smv-count');
 
+    // 3. Always re-render KPIs/chart/trends/table — even for zero rows — so a
+    //    filter with no matches shows real zeros/empty states instead of
+    //    leaving the previous filter's numbers on screen.
     renderSMVAll();
-    toast('SMV Tracker loaded');
+
+    if (!rows.length) {
+      toast('No records found for the selected filters', 'ti-filter-off');
+    } else {
+      toast('SMV Tracker loaded');
+    }
   } catch(e) { console.error(e); showErr('smv-table','SMV Tracker'); }
 }
 
