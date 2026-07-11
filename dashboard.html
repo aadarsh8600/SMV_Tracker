@@ -954,7 +954,7 @@ const COLORS={blue:'#1E88E5',teal:'#1D9E75',amber:'#EF9F27',red:'#DC2626',purple
 // Scriptable grid-line color — Chart.js re-evaluates functions like this on every
 // draw/update, so gridlines stay in sync automatically when dark mode is toggled.
 function gridLineColor() {
-  return document.documentElement.classList.contains('dark') ? 'rgba(148,163,184,.25)' : 'rgba(0,0,0,.04)';
+  return document.documentElement.classList.contains('dark') ? 'rgba(148,163,184,.05)' : 'rgba(0,0,0,.04)';
 }
 
 function makeLine(id, labels, datasets, opts={}) {
