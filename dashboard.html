@@ -960,15 +960,66 @@ function gridLineColor() {
 function makeLine(id, labels, datasets, opts={}) {
   const c=document.getElementById(id); if(!c)return;
   if(CHARTS[id]) CHARTS[id].destroy();
-  const isMonthly = opts.period === 'monthly';
+  
+  // DYNAMIC GRID COLOR
+  const isDark = document.documentElement.classList.contains('dark');
+  const gridColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.3)';
+
   CHARTS[id]=new Chart(c,{
     type:'line', data:{labels,datasets},
+    
+    // --- Custom Inline Plugin to draw numbers on line points ---
+    plugins: [{
+      id: 'lineLabels',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        chart.data.datasets.forEach((dataset, i) => {
+          const meta = chart.getDatasetMeta(i);
+          meta.data.forEach((point, index) => {
+            const val = dataset.data[index];
+            if (val !== null && val !== undefined) { 
+              const isDarkTheme = document.documentElement.classList.contains('dark');
+              ctx.fillStyle = isDarkTheme ? '#E2E8F0' : '#4A5568';
+              
+              // Decreased font size to 9px
+              ctx.font = '600 9px Inter, sans-serif'; 
+              ctx.textAlign = 'center';
+
+              // Round the value to remove decimals
+              const displayVal = Math.round(val).toFixed(0);
+              
+              // Add a % sign if the chart is configured as a percentage chart
+              const text = opts.pct ? displayVal + '%' : displayVal;
+
+              // Alternate positions based on index
+              if (index % 2 === 0) {
+                // First, third, fifth points go ABOVE the line
+                ctx.textBaseline = 'bottom';
+                ctx.fillText(text, point.x, point.y - 6); 
+              } else {
+                // Second, fourth, sixth points go BELOW the line
+                ctx.textBaseline = 'top';
+                ctx.fillText(text, point.x, point.y + 6);
+              }
+            }
+          });
+        });
+      }
+    }],
+    // ----------------------------------------------------------------
+
     options:{
+      // Added bottom padding to make room for numbers drawn below the line
+      layout: { padding: { top: 22, bottom: 22, right: 10, left: 10 } }, 
       responsive:true, maintainAspectRatio:false, animation:{duration:700},
       plugins:{legend:{display:opts.legend||false,labels:{font:{size:11},color:'#64748B',boxWidth:12}},tooltip:{mode:'index',intersect:false,backgroundColor:'#1A1F2B',titleFont:{size:11},bodyFont:{size:11}}},
       scales:{
-        x:{grid:{color:gridLineColor},ticks:{color:'#94A3B8',font:{size:10},maxRotation:45,minRotation:isMonthly?45:0,autoSkip:!isMonthly,maxTicksLimit:isMonthly?undefined:14}},
-        y:{grid:{color:gridLineColor},ticks:{color:'#94A3B8',font:{size:10},callback:v=>opts.pct?v+'%':v},min:opts.min,max:opts.max}
+        x:{
+          grid:{color:gridColor},
+          // FORCED AUTOSKIP FALSE TO SHOW ALL MONTH LABELS
+          ticks:{color:'#94A3B8',font:{size:10},maxRotation:45,autoSkip:false}
+        },
+        y:{grid:{color:gridColor},ticks:{color:'#94A3B8',font:{size:10},callback:v=>opts.pct?v+'%':v},min:opts.min,max:opts.max}
       }
     }
   });
@@ -1467,6 +1518,9 @@ function renderSMVReport() {
   const labels = rep.buckets.map(b=>b.label);
   const data = rep.buckets.map(b=>base.filter(b.test).length);
   const colors = rep.buckets.map(b=>b.color);
+// DYNAMIC GRID COLOR FOR BAR CHART
+  const isDark = document.documentElement.classList.contains('dark');
+  const gridColor = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.3)';
 
   const cvs = document.getElementById('smv-report-chart');
   if (CHARTS['smv-report-chart']) CHARTS['smv-report-chart'].destroy();
@@ -1474,6 +1528,27 @@ function renderSMVReport() {
     CHARTS['smv-report-chart'] = new Chart(cvs, {
       type:'bar',
       data:{ labels, datasets:[{ data, backgroundColor: colors.map(c=>c+'CC'), borderColor: colors, borderWidth:1.5, borderRadius:4 }] },
+// --- NEW: Custom Inline Plugin to draw numbers on top of bars ---
+      plugins: [{
+        id: 'barLabels',
+        afterDatasetsDraw(chart) {
+          const { ctx } = chart;
+          chart.data.datasets.forEach((dataset, i) => {
+            const meta = chart.getDatasetMeta(i);
+            meta.data.forEach((bar, index) => {
+              const val = dataset.data[index];
+              if (val > 0) { // Only draw if the value is greater than 0
+                const isDarkTheme = document.documentElement.classList.contains('dark');
+                ctx.fillStyle = isDarkTheme ? '#E2E8F0' : '#4A5568'; // Adjust text color for dark/light mode
+                ctx.font = '600 11px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.fillText(val, bar.x, bar.y - 4); // Draw text slightly above the bar
+              }
+            });
+          });
+        }
+      }],
       options:{
         responsive:true, maintainAspectRatio:false, animation:{duration:600},
         plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#1A1F2B',titleFont:{size:11},bodyFont:{size:11}}, title:{display:true,text:rep.title,color:'#334155',font:{size:13,weight:'600'}} },
