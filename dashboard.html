@@ -1092,16 +1092,24 @@ function renderTable(elId, rows, cols, tagCols={}, countElId, startIndex = 0) {
   el.innerHTML=h;
 }
 
+function csvCell(v) {
+  // Collapse any embedded newlines (Google Sheets header/cell text can contain
+  // hard line breaks) so a single field can never split a CSV row in two.
+  const s = (v==null ? '' : v.toString()).replace(/\r\n|\r|\n/g, ' ').trim();
+  return '"' + s.replace(/"/g,'""') + '"';
+}
+
 function downloadCSV(key) {
   const src = TDATA[key];
   if(!src || !src.filtered.length) { toast('No data to export', 'ti-alert-circle'); return; }
   const cols = src.cols || Object.keys(src.filtered[0]);
-  let csv = cols.join(',') + '\n';
+  let csv = cols.map(csvCell).join(',') + '\r\n';
   src.filtered.forEach(r => {
-      csv += cols.map(c => '"' + (r[c]||'').toString().replace(/"/g,'""') + '"').join(',') + '\n';
+      csv += cols.map(c => csvCell(r[c])).join(',') + '\r\n';
   });
+  // \uFEFF = UTF-8 BOM, so Excel doesn't mangle any non-ASCII characters
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.href = URL.createObjectURL(new Blob(['\uFEFF' + csv],{type:'text/csv;charset=utf-8;'}));
   a.download = key + '_export.csv';
   a.click();
   toast('Filtered CSV downloaded', 'ti-download');
